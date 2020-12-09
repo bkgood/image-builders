@@ -39,7 +39,7 @@ alpine)
 esac
 
 cleanup() {
-	buildah rm $container
+    buildah rm $container
 }
 
 # don't leave half-baked trash around
