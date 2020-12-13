@@ -16,14 +16,23 @@ fi
 case $base in
 co8)
     container=$(buildah from centos:8)
-    packages="dnf install -y ca-certificates gcc"
-    clean="dnf clean all"
+
+    initialize() {
+        crun dnf install -y ca-certificates gcc
+        crun dnf clean all
+    }
+
     tag="${version}-co8"
     ;;
 leap)
     container=$(buildah from opensuse/leap:15.2)
-    packages="zypper --non-interactive install ca-certificates gcc curl"
-    clean="zypper clean --all"
+
+    initialize() {
+        crun zypper mr --disable repo-non-oss repo-update-non-oss
+        crun zypper --non-interactive --no-refresh install ca-certificates gcc10 curl
+        crun zypper clean --all
+    }
+
     tag="${version}-leap15.2"
     ;;
 alpine)
@@ -45,8 +54,12 @@ cleanup() {
 # don't leave half-baked trash around
 trap "cleanup" ERR SIGINT SIGTERM
 
+crun() {
+    buildah run $container "$@"
+}
+
 cenv() {
-    buildah run $container sh -c "echo \"\${$1}\""
+    crun sh -c "echo \"\${$1}\""
 }
 
 # some inspiration from
@@ -60,25 +73,26 @@ buildah config \
     --env PATH="/usr/local/cargo/bin:$(cenv "PATH")" \
     $container
 
-buildah run $container $packages
-buildah run $container $clean
+initialize
 
-buildah run $container curl -o rustup-init -sSf --proto =https --tlsv1.2 \
+crun curl -o rustup-init -sSf --proto =https --tlsv1.2 \
     "https://static.rust-lang.org/rustup/archive/$rustup_version/x86_64-unknown-linux-gnu/rustup-init"
 
-buildah run $container chmod +x rustup-init
+crun chmod +x rustup-init
 
-buildah run $container ./rustup-init -y --profile=minimal -q \
+crun ./rustup-init -y --profile=minimal -q \
     --default-toolchain $version --no-modify-path
 
-buildah run $container rm rustup-init
+crun rm rustup-init
 
 for x in RUSTUP_HOME CARGO_HOME; do
-    buildah run $container chmod -R a+w $(cenv $x)
+    crun chmod -R a+w $(cenv $x)
 done
 
 for cmd in rustup cargo rustc; do
-    buildah run $container $cmd --version
+    # causes everything to error out if we for whatever reason can't find the
+    # command that should'be been installed.
+    crun $cmd --version
 done
 
 buildah commit --rm $container rust
